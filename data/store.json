@@ -1,0 +1,39 @@
+{
+  "messages": [
+    {
+      "id": "638c990b-2b8c-486d-a096-156bfc170b12",
+      "type": "text",
+      "content": "vr眼睛很好用，便宜，创新",
+      "filename": null,
+      "url": null,
+      "nick": "友好的星星17",
+      "color": "#3f7407",
+      "sid": "cxJ4PYjx4VIk0DtVAAAB",
+      "ts": 1786763984.970971,
+      "deleted": false
+    },
+    {
+      "id": "9c4646c5-ff11-4848-9886-44bb3dfe55d6",
+      "type": "audio",
+      "content": "recording_1786792800644.webm",
+      "filename": "recording_1786792800644.webm",
+      "url": "/uploads/6225ab56-2d4e-4fc3-b369-dc942ac3d5f2.webm",
+      "nick": "友好的星星17",
+      "color": "#3f7407",
+      "sid": "cxJ4PYjx4VIk0DtVAAAB",
+      "ts": 1786764000.65289,
+      "deleted": false
+    }
+  ],
+  "files": {
+    "68277b7b-5c2b-47dc-b9e7-965e7e3a15e5": {
+      "filename": "recording_1786792800644.webm",
+      "path": "C:\\Users\\Administrator\\03claude\\cursorcode\\01testcursor\\uploads\\6225ab56-2d4e-4fc3-b369-dc942ac3d5f2.webm",
+      "url": "/uploads/6225ab56-2d4e-4fc3-b369-dc942ac3d5f2.webm",
+      "type": "audio",
+      "uploader_sid": null,
+      "size": 11480,
+      "uploaded_at": "2026-08-15T11:20:00.650298"
+    }
+  }
+}

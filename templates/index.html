@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>匿名聊天室</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>匿名聊天室</h1>
+            <div class="user-info">
+                <span id="user-nick">游客</span>
+                <button id="edit-nick">编辑昵称</button>
+                <span id="online-count">在线人数: 0</span>
+            </div>
+        </header>
+
+        <main>
+            <div id="messages" class="messages"></div>
+        </main>
+
+        <footer>
+            <div id="search-bar">
+                <input type="text" id="search-input" placeholder="搜索消息...">
+                <button id="search-btn">搜索</button>
+            </div>
+            <div id="sender">
+                <input type="text" id="message-input" placeholder="输入消息...">
+                <div id="attachments">
+                    <button id="file-btn" title="发送文件">
+                        <input type="file" id="file-input" style="display: none;">
+                        📎
+                    </button>
+                    <button id="audio-btn" title="录制语音">
+                        🎤
+                    </button>
+                </div>
+                <button id="send-btn">发送</button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Socket.IO client -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>

@@ -11,7 +11,7 @@ def client():
 
 
 def test_index(client):
-    response = client.get("/")
+    response = client.get("/?json=1")
     assert response.status_code == 200
     data = response.get_json()
     assert data["message"] == "Hello from Flask!"
