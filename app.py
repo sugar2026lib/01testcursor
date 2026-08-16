@@ -22,7 +22,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 # In-memory storage
 messages = []  # List of message dicts
 files = {}     # Dict of file metadata by file_id
-online_users = set()  # Track connected socket IDs
+online_users = {}  # Dict of socket_id -> {nick, color}
 
 def load_store():
     """Load messages and files from JSON file"""
@@ -187,37 +187,6 @@ def get_messages():
         'has_more': len(visible_msgs) > limit
     })
 
-@app.route('/api/search')
-def search_messages():
-    query = request.args.get('q', '').lower().strip()
-    if not query:
-        return jsonify({'messages': [], 'count': 0})
-
-    # Search in message content and filenames
-    results = []
-    for msg in messages:
-        if msg.get('deleted', False):
-            continue
-
-        match = False
-        # Check text content
-        if 'content' in msg and query in msg['content'].lower():
-            match = True
-        # Check filename
-        elif msg.get('filename') and query in msg['filename'].lower():
-            match = True
-
-        if match:
-            results.append(msg)
-
-    # Sort by timestamp (newest first) and limit
-    results.sort(key=lambda x: x.get('ts', 0), reverse=True)
-    results = results[:20]  # Limit search results
-
-    return jsonify({
-        'messages': results,
-        'count': len(results)
-    })
 
 @app.route('/api/message/<message_id>', methods=['DELETE'])
 def delete_message(message_id):
@@ -264,13 +233,19 @@ def delete_message(message_id):
 
 @socketio.on('connect')
 def handle_connect():
-    online_users.add(request.sid)
-    emit('user_count', {'count': len(online_users)})
+    online_users[request.sid] = {
+        'nick': '游客',
+        'color': '#' + ''.join([str(hash(str(i)) % 10) for i in range(6)])
+    }
+    # Emit updated user list to all clients
+    emit('user_list', {'users': [{'sid': sid, 'nick': info['nick'], 'color': info['color']} for sid, info in online_users.items()]}, broadcast=True)
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    online_users.discard(request.sid)
-    emit('user_count', {'count': len(online_users)})
+    if request.sid in online_users:
+        del online_users[request.sid]
+        # Emit updated user list to all clients
+        emit('user_list', {'users': [{'sid': sid, 'nick': info['nick'], 'color': info['color']} for sid, info in online_users.items()]}, broadcast=True)
 
 @socketio.on('send_message')
 def handle_send_message(data):
@@ -279,10 +254,21 @@ def handle_send_message(data):
     content = data.get('content', '')
     filename = data.get('filename')
     url = data.get('url')
+    to_sid = data.get('to')  # optional target socket id for private message
 
-    # Generate anonymous nick and color if not provided (should come from client)
-    nick = data.get('nick', 'Anonymous')
-    color = data.get('color', '#' + ''.join([str(hash(str(i)) % 10) for i in range(6)]))
+    # Use nick/color from online_users for consistency; fallback to provided
+    user_info = online_users.get(request.sid, {'nick': 'Anonymous', 'color': '#' + ''.join([str(hash(str(i)) % 10) for i in range(6)])})
+    nick = data.get('nick', user_info['nick'])
+    color = data.get('color', user_info['color'])
+
+    # Determine room
+    if to_sid and to_sid in online_users and to_sid != request.sid:
+        # Private message: room is sorted pair
+        room = '_'.join(sorted([request.sid, to_sid]))
+    else:
+        # Lobby message
+        room = 'lobby'
+        to_sid = None  # ensure null for lobby
 
     # Create message object
     message = {
@@ -294,6 +280,8 @@ def handle_send_message(data):
         'nick': nick,
         'color': color,
         'sid': request.sid,
+        'to': to_sid,
+        'room': room,
         'ts': datetime.utcnow().timestamp(),
         'deleted': False
     }
@@ -307,8 +295,12 @@ def handle_send_message(data):
     # Persist to disk
     save_store()
 
-    # Broadcast to all clients
-    emit('new_message', message, broadcast=True)
+    # Emit to appropriate recipients
+    if room == 'lobby':
+        emit('new_message', message, broadcast=True)
+    else:
+        # Send to both participants in private room
+        emit('new_message', message, room=room)
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

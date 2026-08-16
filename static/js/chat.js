@@ -2,6 +2,13 @@
 let socket;
 let userNick = '';
 let userColor = '';
+let userSid = ''; // will be set after connect
+
+// State
+let allMessages = []; // all messages received (from history and real-time)
+let currentRoom = 'lobby'; // default room
+let onlineUsers = []; // list of {sid, nick, color}
+let conversations = new Map(); // roomId -> {lastMessagePreview, timestamp, userNick (for private)}
 
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize Socket.IO connection
@@ -13,11 +20,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set up event listeners
     setupEventListeners();
 
-    // Load initial message history
-    loadMessageHistory();
-
     // Handle socket events
     setupSocketEvents();
+
+    // Load initial message history
+    loadMessageHistory();
 });
 
 function loadUserIdentity() {
@@ -43,11 +50,6 @@ function loadUserIdentity() {
         localStorage.setItem('chatNick', userNick);
         localStorage.setItem('chatColor', userColor);
     }
-
-    // Display user nick
-    document.getElementById('user-nick').textContent = userNick;
-    document.getElementById('user-nick').style.backgroundColor = userColor;
-    document.getElementById('user-nick').style.color = getContrastColor(userColor);
 }
 
 function getContrastColor(hexColor) {
@@ -68,8 +70,11 @@ function setupEventListeners() {
         }
     });
 
-    // Send button
-    document.getElementById('send-btn').addEventListener('click', sendMessage);
+    // Send button (form submit)
+    document.getElementById('chat-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        sendMessage();
+    });
 
     // File upload
     document.getElementById('file-btn').addEventListener('click', () => {
@@ -83,19 +88,12 @@ function setupEventListeners() {
 
     // Nickname edit
     document.getElementById('edit-nick').addEventListener('click', editNickname);
-
-    // Search
-    document.getElementById('search-btn').addEventListener('click', searchMessages);
-    document.getElementById('search-input').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            searchMessages();
-        }
-    });
 }
 
 function setupSocketEvents() {
     socket.on('connect', () => {
         console.log('Connected to server');
+        // Send our nick and color to server (so it can store in online_users)
         socket.emit('join', { nick: userNick, color: userColor });
     });
 
@@ -103,19 +101,46 @@ function setupSocketEvents() {
         console.log('Disconnected from server');
     });
 
-    socket.on('new_message', (message) => {
-        addMessageToDom(message);
+    // Receive the user list (online users) from server
+    socket.on('user_list', (data) => {
+        onlineUsers = data.users.map(u => ({
+            sid: u.sid,
+            nick: u.nick,
+            color: u.color
+        }));
+        // Update our own sid from the list (find the one matching our nick/color? better: server could send our sid in connect)
+        // We'll update our sid by looking for a user with our nick and color (not perfect but ok for anon)
+        const me = onlineUsers.find(u => u.nick === userNick && u.color === userColor);
+        if (me) {
+            userSid = me.sid;
+        }
+        renderSidebar();
     });
 
-    socket.on('message_deleted', (data) => {
-        const msgElement = document.querySelector(`.message[data-id="${data.id}"]`);
-        if (msgElement) {
-            msgElement.remove();
+    // Receive new message
+    socket.on('new_message', (message) => {
+        // Store message
+        allMessages.push(message);
+        // Update conversation preview
+        updateConversationPreview(message);
+        // If message is for current room, append to DOM
+        if (message.room === currentRoom) {
+            addMessageToDom(message);
         }
     });
 
-    socket.on('user_count', (data) => {
-        document.getElementById('online-count').textContent = `在线人数: ${data.count}`;
+    // Receive message deletion (optional, we can handle by removing from allMessages and re-rendering)
+    socket.on('message_deleted', (data) => {
+        const messageId = data.id;
+        // Remove from allMessages
+        allMessages = allMessages.filter(msg => msg.id !== messageId);
+        // If the deleted message was in current room, re-render
+        if (data.room === currentRoom) {
+            renderMessagesForCurrentRoom();
+        } else {
+            // Just update preview (since the last message might have been deleted)
+            updateConversationPreview(null, data.room); // null to indicate we need to recalc preview
+        }
     });
 }
 
@@ -125,12 +150,22 @@ function sendMessage() {
 
     if (!content) return;
 
-    // Send text message
+    // Determine target room: if we have a private conversation selected, to_sid is the other user's sid
+    let toSid = null;
+    if (currentRoom !== 'lobby') {
+        // currentRoom is a sorted pair like "sid1_sid2"
+        const [sidA, sidB] = currentRoom.split('_');
+        toSid = (sidA === userSid) ? sidB : sidA;
+    }
+
+    // Send message via socket
     socket.emit('send_message', {
         type: 'text',
         content: content,
+        // nick and color will be filled by server from online_users, but we send anyway for consistency
         nick: userNick,
-        color: userColor
+        color: userColor,
+        to: toSid
     });
 
     // Clear input
@@ -160,6 +195,13 @@ function handleFileSelect(e) {
             throw new Error(data.error);
         }
 
+        // Determine target room (same as sendMessage)
+        let toSid = null;
+        if (currentRoom !== 'lobby') {
+            const [sidA, sidB] = currentRoom.split('_');
+            toSid = (sidA === userSid) ? sidB : sidA;
+        }
+
         // Send file message
         socket.emit('send_message', {
             type: data.type,
@@ -167,7 +209,8 @@ function handleFileSelect(e) {
             filename: data.filename,
             url: data.url,
             nick: userNick,
-            color: userColor
+            color: userColor,
+            to: toSid
         });
 
         // Reset file input
@@ -224,6 +267,13 @@ async function toggleAudioRecording() {
                         throw new Error(data.error);
                     }
 
+                    // Determine target room
+                    let toSid = null;
+                    if (currentRoom !== 'lobby') {
+                        const [sidA, sidB] = currentRoom.split('_');
+                        toSid = (sidA === userSid) ? sidB : sidA;
+                    }
+
                     // Send audio message
                     socket.emit('send_message', {
                         type: data.type,
@@ -231,7 +281,8 @@ async function toggleAudioRecording() {
                         filename: data.filename,
                         url: data.url,
                         nick: userNick,
-                        color: userColor
+                        color: userColor,
+                        to: toSid
                     });
                 } catch (error) {
                     alert('语音上传失败: ' + error.message);
@@ -264,12 +315,206 @@ async function toggleAudioRecording() {
     }
 }
 
+function updateConversationPreview(message, room) {
+    // If room is provided, update that room's preview; otherwise use message.room
+    const targetRoom = room || message.room;
+    if (!targetRoom) return;
+
+    // Get the other user's nick for private rooms, or null for lobby
+    let displayNick = '大厅';
+    let isLobby = (targetRoom === 'lobby');
+    if (!isLobby) {
+        // Private room: format is "sid1_sid2"
+        const [sidA, sidB] = targetRoom.split('_');
+        const otherSid = (sidA === userSid) ? sidB : sidA;
+        const otherUser = onlineUsers.find(u => u.sid === otherSid);
+        displayNick = otherUser ? otherUser.nick : '未知用户';
+    }
+
+    // Determine preview text based on message type
+    let preview = '';
+    if (message) {
+        switch (message.type) {
+            case 'text':
+                preview = message.content;
+                break;
+            case 'image':
+                preview = '[图片]';
+                break;
+            case 'audio':
+                preview = '[语音]';
+                break;
+            case 'file':
+                preview = `[文件] ${message.filename}`;
+                break;
+            default:
+                preview = message.content || '[消息]';
+        }
+    } else {
+        // If message is null, we need to recalc preview from allMessages for this room
+        const roomMessages = allMessages.filter(m => m.room === targetRoom && !m.deleted);
+        if (roomMessages.length === 0) {
+            preview = '等待消息...';
+        } else {
+            // Get the last message
+            const lastMsg = roomMessages.reduce((prev, current) => (prev.ts > current.ts) ? prev : current);
+            switch (lastMsg.type) {
+                case 'text':
+                    preview = lastMsg.content;
+                    break;
+                case 'image':
+                    preview = '[图片]';
+                    break;
+                case 'audio':
+                    preview = '[语音]';
+                    break;
+                case 'file':
+                    preview = `[文件] ${lastMsg.filename}`;
+                    break;
+                default:
+                    preview = lastMsg.content || '[消息]';
+            }
+        }
+    }
+
+    // Update conversations map
+    if (!conversations.has(targetRoom)) {
+        conversations.set(targetRoom, {});
+    }
+    const conv = conversations.get(targetRoom);
+    conv.preview = preview;
+    conv.timestamp = message ? message.ts : (conversations.get(targetRoom).timestamp || 0);
+    if (!isLobby) {
+        conv.displayNick = displayNick;
+    }
+
+    // Re-render sidebar
+    renderSidebar();
+}
+
+function renderSidebar() {
+    const sidebarContent = document.querySelector('.sidebar-content');
+    const onlineUsersContent = document.getElementById('online-users-content');
+
+    // Clear existing content (we'll rebuild)
+    sidebarContent.innerHTML = `
+        <div class="chat-item ${currentRoom === 'lobby' ? 'active' : ''}" data-room="lobby">
+            <div class="chat-item-avatar">
+                <span>💬</span>
+            </div>
+            <div class="chat-item-info">
+                <div class="chat-item-name">大厅</div>
+                <div class="chat-item-preview">等待消息...</div>
+            </div>
+            <div class="chat-item-meta">
+                <span class="chat-item-time"></span>
+            </div>
+        </div>
+    `;
+    onlineUsersContent.innerHTML = '';
+
+    // Add lobby item (already added above, but we need to update its preview and time)
+    const lobbyItem = sidebarContent.querySelector('[data-room="lobby"]');
+    const lobbyConv = conversations.get('lobby') || {preview: '等待消息...', timestamp: 0};
+    lobbyItem.querySelector('.chat-item-preview').textContent = lobbyConv.preview;
+    if (lobbyConv.timestamp) {
+        lobbyItem.querySelector('.chat-item-time').textContent = new Date(lobbyConv.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    }
+
+    // Add online users as private conversation items
+    onlineUsers.forEach(user => {
+        // Skip ourselves
+        if (user.sid === userSid) return;
+
+        // Create a unique room id for this pair (sorted)
+        const roomId = [userSid, user.sid].sort().join('_');
+        const isActive = (currentRoom === roomId);
+
+        const item = document.createElement('div');
+        item.className = `chat-item ${isActive ? 'active' : ''}`;
+        item.dataset.room = roomId;
+
+        // Avatar: use first letter of nick or emoji? We'll use first letter for simplicity.
+        const avatarLetter = user.nick.charAt(0);
+        item.innerHTML = `
+            <div class="chat-item-avatar" style="background: ${user.color};">
+                <span>${avatarLetter}</span>
+            </div>
+            <div class="chat-item-info">
+                <div class="chat-item-name" style="color: ${user.color};">${user.nick}</div>
+                <div class="chat-item-preview">等待消息...</div>
+            </div>
+            <div class="chat-item-meta">
+                <span class="chat-item-time"></span>
+            </div>
+        `;
+
+        // Update preview and time if we have conversation data
+        const conv = conversations.get(roomId) || {preview: '等待消息...', timestamp: 0};
+        item.querySelector('.chat-item-preview').textContent = conv.preview;
+        if (conv.timestamp) {
+            item.querySelector('.chat-item-time').textContent = new Date(conv.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        }
+
+        // Click to switch conversation
+        item.addEventListener('click', () => {
+            switchToRoom(roomId);
+        });
+
+        onlineUsersContent.appendChild(item);
+    });
+}
+
+function switchToRoom(roomId) {
+    currentRoom = roomId;
+    // Update header title
+    const chatTitle = document.getElementById('current-chat-title');
+    if (roomId === 'lobby') {
+        chatTitle.textContent = '大厅';
+    } else {
+        // Find the other user's nick
+        const [sidA, sidB] = roomId.split('_');
+        const otherSid = (sidA === userSid) ? sidB : sidA;
+        const otherUser = onlineUsers.find(u => u.sid === otherSid);
+        chatTitle.textContent = otherUser ? otherUser.nick : '未知用户';
+    }
+    // Update active state in sidebar
+    document.querySelectorAll('.chat-item').forEach(item => {
+        if (item.dataset.room === roomId) {
+            item.classList.add('active');
+        } else {
+            item.classList.remove('active');
+        }
+    });
+    // Re-render messages for the new room
+    renderMessagesForCurrentRoom();
+}
+
+function renderMessagesForCurrentRoom() {
+    const messagesContainer = document.getElementById('messages');
+    messagesContainer.innerHTML = '';
+
+    // Filter messages for current room, not deleted, sorted by timestamp ascending
+    const roomMessages = allMessages
+        .filter(m => m.room === currentRoom && !m.deleted)
+        .sort((a, b) => a.ts - b.ts);
+
+    roomMessages.forEach(message => {
+        addMessageToDom(message);
+    });
+
+    // Scroll to bottom
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
 function addMessageToDom(message) {
     const messagesContainer = document.getElementById('messages');
     const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${message.socketId === socket.id ? 'self' : 'other'}`;
+    // Determine if message is from self
+    const isSelf = message.sid === userSid;
+    messageDiv.className = `message ${isSelf ? 'self' : 'other'}`;
     messageDiv.dataset.id = message.id;
-    messageDiv.dataset.sid = message.socketId;
+    messageDiv.dataset.sid = message.sid;
 
     // Format timestamp
     const timestamp = new Date(message.ts * 1000);
@@ -288,7 +533,7 @@ function addMessageToDom(message) {
                     <div class="message-text">${escapeHtml(message.content)}</div>
                     <div class="message-actions">
                         <button onclick="copyToClipboard(this)" title="复制">📋</button>
-                        ${message.socketId === socket.id ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
+                        ${isSelf ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
                     </div>
                 </div>
             `;
@@ -305,7 +550,7 @@ function addMessageToDom(message) {
                         <img src="${message.url}" alt="${message.filename}" onclick="openImageInNewTab('${message.url}')">
                     </div>
                     <div class="message-actions">
-                        ${message.socketId === socket.id ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
+                        ${isSelf ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
                     </div>
                 </div>
             `;
@@ -322,7 +567,7 @@ function addMessageToDom(message) {
                         <audio controls src="${message.url}"></audio>
                     </div>
                     <div class="message-actions">
-                        ${message.socketId === socket.id ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
+                        ${isSelf ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
                     </div>
                 </div>
             `;
@@ -345,7 +590,7 @@ function addMessageToDom(message) {
                         <a href="${message.url}" class="message-file-download" download>下载</a>
                     </div>
                     <div class="message-actions">
-                        ${message.socketId === socket.id ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
+                        ${isSelf ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
                     </div>
                 </div>
             `;
@@ -360,7 +605,7 @@ function addMessageToDom(message) {
                 <div class="message-content">
                     <div class="message-text">${escapeHtml(message.content || '')}</div>
                     <div class="message-actions">
-                        ${message.socketId === socket.id ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
+                        ${isSelf ? `<button onclick="deleteMessage(this, '${message.id}')" title="删除">🗑️</button>` : ''}
                     </div>
                 </div>
             `;
@@ -368,7 +613,6 @@ function addMessageToDom(message) {
 
     messageDiv.innerHTML = contentHTML;
     messagesContainer.appendChild(messageDiv);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
 function deleteMessage(button, messageId) {
@@ -414,104 +658,28 @@ function copyToClipboard(button) {
     });
 }
 
-function searchMessages() {
-    const query = document.getElementById('search-input').value.trim();
-    if (!query) return;
-
-    const searchBtn = document.getElementById('search-btn');
-    searchBtn.disabled = true;
-    searchBtn.innerHTML = '🔍';
-
-    fetch(`/api/search?q=${encodeURIComponent(query)}`)
-    .then(response => response.json())
-    .then(data => {
-        showSearchResults(data.messages);
-    })
-    .catch(error => {
-        alert('搜索失败: ' + error.message);
-        console.error('Search error:', error);
-    })
-    .finally(() => {
-        searchBtn.disabled = false;
-        searchBtn.innerHTML = '🔍';
-    });
-}
-
-function showSearchResults(messages) {
-    // Create modal
-    const modal = document.createElement('div');
-    modal.className = 'search-modal';
-    modal.innerHTML = `
-        <div class="search-modal-content">
-            <h3>搜索结果 (${messages.length} 条)</h3>
-            <div class="search-results">
-                ${messages.length > 0 ? messages.map(msg => `
-                    <div class="search-result" data-id="${msg.id}">
-                        <div class="search-result-header">
-                            <span class="search-result-nick" style="color: ${msg.color}">${msg.nick}</span>
-                            <span class="search-result-time">${new Date(msg.ts * 1000).toLocaleString()}</span>
-                        </div>
-                        <div class="search-result-content">
-                            ${msg.type === 'text' ?
-                                `<p>${escapeHtml(msg.content.substring(0, 100))}${msg.content.length > 100 ? '...' : ''}</p>` :
-                                msg.type === 'image' ?
-                                `<img src="${msg.url}" alt="${msg.filename}" style="max-width: 100px; max-height: 100px;">` :
-                                msg.type === 'audio' ?
-                                `<audio controls src="${msg.url}" style="max-width: 200px;"></audio>` :
-                                `<div><strong>${escapeHtml(msg.filename)}</strong> (${formatFileSize(msg.size || 0)})</div>`
-                            }
-                        </div>
-                    </div>
-                `).join('') : '<p>没有找到相关消息</p>'}
-            </div>
-            <button id="close-search">关闭</button>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    // Add click listeners to results
-    modal.querySelectorAll('.search-result').forEach(result => {
-        result.addEventListener('click', () => {
-            const messageId = result.dataset.id;
-            // Scroll to message in chat
-            const msgElement = document.querySelector(`.message[data-id="${messageId}"]`);
-            if (msgElement) {
-                msgElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                // Highlight briefly
-                msgElement.style.border = '2px solid #3498db';
-                setTimeout(() => {
-                    msgElement.style.border = '';
-                }, 2000);
-            }
-            // Close modal
-            document.body.removeChild(modal);
-        });
-    });
-
-    // Close button
-    modal.querySelector('#close-search').addEventListener('click', () => {
-        document.body.removeChild(modal);
-    });
-
-    // Close on outside click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            document.body.removeChild(modal);
-        }
-    });
-}
-
 function loadMessageHistory() {
     fetch('/api/messages?limit=50')
     .then(response => response.json())
     .then(data => {
-        // Display messages in chronological order
-        data.messages.forEach(msg => {
-            // Add socketId for self-check (we don't have it from history, so assume not self)
-            msg.socketId = null;
-            addMessageToDom(msg);
+        // Store all messages
+        allMessages = data.messages.map(msg => {
+            // Ensure room exists (for backward compatibility, if not present assume lobby)
+            if (!msg.room) {
+                msg.room = 'lobby';
+            }
+            // Ensure socketId for self-check (we don't have it from history, so we'll compare sid later)
+            msg.socketId = null; // we'll set this when we get the sid from socket
+            return msg;
         });
+        // Update conversation previews based on loaded messages
+        allMessages.forEach(msg => {
+            if (!msg.deleted) {
+                updateConversationPreview(msg);
+            }
+        });
+        // Render messages for current room (lobby by default)
+        renderMessagesForCurrentRoom();
     })
     .catch(error => {
         console.error('Failed to load message history:', error);
@@ -558,11 +726,10 @@ function editNickname() {
     const newNick = prompt('请输入新的昵称:', userNick);
     if (newNick !== null && newNick.trim() !== '') {
         userNick = newNick.trim();
-        // Keep same color or generate new one?
         localStorage.setItem('chatNick', userNick);
         document.getElementById('user-nick').textContent = userNick;
 
         // Notify others of nickname change (optional)
-        socket.emit('nickname_changed', { nick: userNick, id: socket.id });
+        socket.emit('nickname_changed', { nick: userNick, id: userSid });
     }
 }

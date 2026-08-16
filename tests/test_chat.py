@@ -213,58 +213,6 @@ def test_get_messages(client):
     assert data['messages'][1]['content'] == 'Second message'
 
 
-def test_search_messages(client):
-    """Test searching messages"""
-    # Clear state
-    messages.clear()
-    files.clear()
-
-    # Add test messages
-    test_messages = [
-        {
-            'id': 'msg-1',
-            'type': 'text',
-            'content': 'Hello world',
-            'nick': 'User1',
-            'color': '#ff0000',
-            'sid': 'session-1',
-            'timestamp': 1234567890,
-            'deleted': False
-        },
-        {
-            'id': 'msg-2',
-            'type': 'text',
-            'content': 'Goodbye universe',
-            'nick': 'User2',
-            'color': '#00ff00',
-            'sid': 'session-2',
-            'timestamp': 1234567891,
-            'deleted': False
-        }
-    ]
-
-    messages.extend(test_messages)
-
-    # Save to persist
-    from app import save_store
-    save_store()
-
-    # Search for "world"
-    response = client.get('/api/search?q=world')
-    assert response.status_code == 200
-
-    data = json.loads(response.data)
-    assert 'messages' in data
-    assert len(data['messages']) == 1
-    assert data['messages'][0]['content'] == 'Hello world'
-
-    # Search for "uni"
-    response = client.get('/api/search?q=uni')
-    assert response.status_code == 200
-
-    data = json.loads(response.data)
-    assert len(data['messages']) == 1
-    assert data['messages'][0]['content'] == 'Goodbye universe'
 
 
 def test_file_serving(client):

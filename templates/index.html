@@ -7,39 +7,58 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>匿名聊天室</h1>
-            <div class="user-info">
-                <span id="user-nick">游客</span>
-                <button id="edit-nick">编辑昵称</button>
-                <span id="online-count">在线人数: 0</span>
+    <div class="wrapper">
+        <!-- Left Sidebar: Conversation List -->
+        <div id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <h3>会话</h3>
             </div>
-        </header>
-
-        <main>
-            <div id="messages" class="messages"></div>
-        </main>
-
-        <footer>
-            <div id="search-bar">
-                <input type="text" id="search-input" placeholder="搜索消息...">
-                <button id="search-btn">搜索</button>
-            </div>
-            <div id="sender">
-                <input type="text" id="message-input" placeholder="输入消息...">
-                <div id="attachments">
-                    <button id="file-btn" title="发送文件">
-                        <input type="file" id="file-input" style="display: none;">
-                        📎
-                    </button>
-                    <button id="audio-btn" title="录制语音">
-                        🎤
-                    </button>
+            <div class="sidebar-content">
+                <div class="chat-item active" data-room="lobby">
+                    <div class="chat-item-avatar">
+                        <span>💬</span>
+                    </div>
+                    <div class="chat-item-info">
+                        <div class="chat-item-name">大厅</div>
+                        <div class="chat-item-preview">等待消息...</div>
+                    </div>
+                    <div class="chat-item-meta">
+                        <span class="chat-item-time"></span>
+                    </div>
                 </div>
-                <button id="send-btn">发送</button>
+                <!-- Online users will be added here dynamically -->
+                <div id="online-users-list" class="online-users">
+                    <div class="sidebar-header">
+                        <h3>在线用户</h3>
+                    </div>
+                    <div id="online-users-content"></div>
+                </div>
             </div>
-        </footer>
+        </div>
+
+        <!-- Right Chat Window -->
+        <div id="chat-window" class="chat-window">
+            <div class="chat-header">
+                <div id="current-chat-title">大厅</div>
+                <div id="current-chat-status">在线人数: <span id="online-count">0</span></div>
+            </div>
+            <div class="chat-messages" id="messages"></div>
+            <div class="chat-input-wrapper">
+                <form id="chat-form">
+                    <div class="input-group">
+                        <button type="button" id="file-btn" title="发送文件">
+                            <input type="file" id="file-input" style="display: none;">
+                            📎
+                        </button>
+                        <button type="button" id="audio-btn" title="录制语音">
+                            🎤
+                        </button>
+                        <input type="text" id="message-input" placeholder="输入消息..." autocomplete="off">
+                        <button type="submit" id="send-btn">发送</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <!-- Socket.IO client -->
